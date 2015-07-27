@@ -1,0 +1,213 @@
+---
+layout: post
+title: "talk to me"
+date: 2015-07-25 11:17:48 -0400
+comments: true
+categories: rust programming cli clap
+---
+
+This is the second post in a series titled, "Rusty Utilities"
+
+If you haven't already, you may want to check out the previous post in order to catch up.
+
+ * [Part I - Introductions][part_i]
+ * [Part II - Talk to me][part_ii]
+ * [Part III - Argument Parsing without Arguments?!][part_iii]
+
+## Getting that input
+
+In the first post we set the stage for building our utility, we defined the functionality (or lack thereof), and determined what information we would need to obtain in order to run. For us, it was determining which file to read and count.
+
+In this post we will discuss the different methods in which we could obtain that information, along with the pros and cons of each.
+
+### Red or Blue, you decide
+
+We are going to assume that all, or the majority of our input will be coming from the user. This is because getting information from the environment or system is relatively simple because it's well defined and terse. Getting input from a user is somewhat more loose, free flowing, and abstract. This is partly because humans don't think like machines, but also because of the idiosyncrasy of natural language.
+
+To overcome the complexities of natural language processing, we must do one of two things
+
+ A.) Explicitly ask for the information
+ 
+ B.) Define a more strict language which both our program and user will speak
+
+### Just ask! The 'Question/Answer' CLI
+
+Option A appears to be far more simple, we just ask the user what we want to know. Done. Problem solved, right? Umm, sometimes? Let's examine how this works.
+
+ 1. The user starts our program
+ 2. The user is presented with a question (or series of questions)
+ 3. The user answers them
+ 4. Once all questions are answered, our program executes it's mission
+ 5. The user is super happy with the results
+ 6. Happy days
+ 7. Rinse, repeat
+
+Looks simple enough, let's try it (but keep in mind this method has some serious draw backs we'll discuss shortly)
+
+ * **DISCLAIMER** As I stated in the previous post, the code examples may be horrible Rust code in practice, but in order to keep it short and to the point I'm doing some things you probably shouldn't in production code.
+
+{% codeblock lang:rust src/main.rs https://github.com/kbknapp/rwc/blob/a9578710e5eabffaa381ce401f312791bcbd9b06/src/main.rs %}
+use std::fs::File;
+use std::io::{self, BufRead, Read, Write};
+
+fn main() {
+    // Prompt the user
+    print!("Whic file would you like to count?: ");
+    io::stdout().flush().unwrap();
+
+    // Get the answer from the user
+    let input = io::stdin();
+    let in_file = input.lock().lines().next().unwrap().unwrap().trim();
+
+    // Open and read the file
+    let mut file = File::open(&in_file).ok().unwrap();
+    let mut s = String::new();
+    file.read_to_string(&mut s).unwrap();
+
+    // Count the lines
+    let lines = s.lines().map(|_| 1).fold(0, |acc, i| acc + i);
+
+    // Display the result
+    println!("{} {}", lines, in_file);
+}
+{% endcodeblock %}
+
+Let's run it...
+
+```plain
+$ rwc
+
+Which file would you like to count?: test_input.txt
+
+8 test_input.txt
+```
+{% pullquote right %}
+Now is a good time to note, {" it's almost never a good idea to accept un-validated input. "} In `rwc` this may not have huge implications if a user entered something nefarious, but you never know! Input validation is outside the scope of this series, but I would recommend spending some time reading on the subject and making it a key point in your development cycle.
+{% endpullquote %}
+
+So, back to the recent `rwc` run...Seems to work just fine, what gives? There are a few problems with this method of getting input. First, it requires active participation. Meaning a human needs to sit and wait for the question, then enter the answer. For our program this isn't a problem, but imagine there were several questions, and perhaps one of them had a lengthy operation? We could either ask for all the questions up front, or maybe use threading, problem solved now, right? Mmm, still not quite.
+
+Let's imagine `rwc` gets some options (it will...be patient!), and many of those options are optional or have a default value. So the user doesn't need to answer them in all cases. It takes time for the user to read each question and decide if they need to answer the question or not. Add to this, the way most of these "question and answer" style CLIs are implemented, there is not a way to "re-answer" a mistakenly typed answer. This can be **infuriating**!
+
+There is a perl script out there in the security arena which is in common use, and uses this question/answer style CLI. I cannot tell you how many times, I've blazed through the "optional" settings and hit `[ENTER]` one to many times, and had to `CTRL+C` to quit and *re-enter* all the truely correct answers, *again*.
+
+{% pullquote left %}
+The other downside is {" these interfaces aren't nearly as scriptable. "} Perhaps that not a goal in your particular use case, but in `rwc` it'd sure be nice if we could throw this into a script, or pipe it through a command chain. What if we needed to count the lines of every file on a hard drive? Entering the file/path names by hand would be **horrendous**!
+{% endpullquote %}
+
+### It's not all bad news
+
+There are some up-sides to question/answer style interfaces. They're *very* newbie friendly. Meaning a user doesn't need to know a whole lot about your program in order to use it. Because you simple ask them for everything you need to know! This is a very small boon though, as the more a user spends with your program the less of a "feature" this will appear to be.
+
+### Decisions, Decisions - The 'Menu' CLI
+
+There is a variation of the question/answer CLI which uses a menu driven system. Many times the menu and question/answer styles fit nicely together and even complement each other. In this style, users are presented with a list of choices, and selectively decide what they wish to answer. At which point they are presented with a list of options, or a field to input text.
+
+For `rwc` this isn't really applicable, but here's what a menu system may look like when used in a simple fictional application called `menudemo`
+
+```plain
+$ menudemo
+
+Please make a selection and hit [ENTER]
+
+   1. Enter a file to evaluate
+   2. Turn on debugging
+   3. Perform kitten surgery
+
+> 1
+Which file should we evaluate?: secrets.txt
+
+Doing something crazy with 'secrets.txt'...RESULTS!
+
+Please make a selection and hit [ENTER]
+
+   1. Enter a file to evaluate
+   2. Turn on debugging
+   3. Perform kitten surgery
+   q. Quit
+
+> q
+```
+
+I know what you're thinking...why didn't I pick kitten surgery?! Well I'm not a vet, so that would have been messy, and probably illegal.
+
+Back to less important matters; menus provide a few nice features such as the ability to *not* answer all questions without the possibility of having to re-start. The potential ability to *re-answer* questions which have an incorrect answer, or a way to back to previously answered questions. And finally a way to structure/group a series of complex or related questions.
+
+### When to use Menus or Question/Answers
+
+If your particular domain or project does need to be scriptable or pipeable and/or has very complex or grouped series of input requirements you may find the question/answers or menu system acceptable. But do keep in mind it's various drawbacks.
+
+### My favorite thing, in ever use of the word - Arguments
+
+The final common place input system is called argument parsing, or command line arguments. In this method, as I'm sure you're already familiar with, the user provides all the details and required input at the time of program invocation. This is the method used extremely heavily through Unix/Linux and arguably the majority of command line applications. Using command line arguments is akin to designing a language that your program speaks, and your user communicating to your program in that language.
+
+This is the method which we will be focusing on for the remainder of this series.
+
+All the downsides of questions/answers or menus are alleviated with argument parsing. Even some of the boons of menu systems, such as grouping and complex series of questions, and can be reasonably conquered using command line arguments. There is really only one drawback to command line arguments; They're less newbie friendly. Users need to familiarize themselves with the various arguments you support and how to speak your programs language. This can take time, but once mastered opens the infinitum of possibilities! And yes, I make up words.
+
+For `rwc` we only need a single argument, the file. Let's change our implementation to use arguments instead of questions/answers.
+
+{% codeblock lang:rust src/main.rs https://github.com/kbknapp/rwc/blob/0c4af1167980400c01fcde8abb1a62058c0a3081/src/main.rs %}
+use std::env;
+use std::fs::File;
+use std::io::{BufRead, Read};
+
+fn main() {
+    // Grab the first argument provided as the file to count
+    // Note, we skip the first argument because that's the binary name
+    let in_file = env::args().skip(1).next().unwrap();
+
+    // Open and read the file
+    let mut file = File::open(&in_file).ok().unwrap();
+    let mut s = String::new();
+    file.read_to_string(&mut s).unwrap();
+
+    // Count the lines
+    let lines = s.lines().map(|_| 1).fold(0, |acc, i| acc + i);
+
+    // Display the result
+    println!("{} {}", lines, in_file);
+}
+{% endcodeblock %}
+
+Now let's run it and see:
+
+```plain linenos:false
+$ rwc test_input.txt
+8 test_input.txt
+```
+
+Yay! Can we pipe/script it?
+
+```plain
+$ find . -type f -name "*.sample" -exec rwc {} \;
+
+15 ./.git/hooks/applypatch-msg.sample
+24 ./.git/hooks/commit-msg.sample
+8 ./.git/hooks/post-update.sample
+14 ./.git/hooks/pre-applypatch.sample
+49 ./.git/hooks/pre-commit.sample
+53 ./.git/hooks/pre-push.sample
+169 ./.git/hooks/pre-rebase.sample
+36 ./.git/hooks/prepare-commit-msg.sample
+128 ./.git/hooks/update.sample
+```
+
+Double Yay!! Ignore the `find` syntax, it's just looking for any file in our current directory or below that ends with a `.sample` extension (which there should be a few in your `.git` directory) and running `rwc` on it.
+
+Again, if you run `rwc` on non UTF-8 files it'll panic, along with a host of other reasons. This is because we are focusing on CLIs...not proper Rust :)
+
+We have now parsed a command line argument, mission complete, gold stars all around, let's go home and tell war stories now, riiight? Nope. The journey has just begun!
+
+Next we're going to talk about using an argument parsing library to handle some of the nitty gritty for us and provide some of those professional niceties that every good *nix command line application should have!
+
+Rusty Utilities Series:
+
+ * [Part I - Introductions][part_i]
+ * [Part II - Talk to me][part_ii]
+ * [Part III - Argument Parsing without Arguments?!][part_iii]
+
+[part_i]: http://kbknapp.github.io/2015/07/25/rusty-utilities/index.html
+[part_ii]: http://kbknapp.github.io/2015-07/25/talk-to-me/index.html
+[part_iii]: http://kbknapp/github.io/2015-07/25/argument-parsing-without-arguments/index.html
+[exa_repo]: https://github.com/ogham/exa
